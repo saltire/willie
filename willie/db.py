@@ -69,9 +69,11 @@ class WillieDB(object):
 
         if self.type == 'mysql':
             self.substitution = '%s'
+            self.sub = '%s'
             self._mySQL(config)
         elif self.type == 'sqlite':
             self.substitution = '?'
+            self.sub = '?'
             self._sqlite(config)
 
     def __getattr__(self, attr):
@@ -323,7 +325,7 @@ class Table(object):
         Returns the number of users (entries starting with # or &) in the
         table's ``key`` column.
         """
-        if not self.columns:  # handle a non-existant table
+        if not self.columns: # handle a non-existent table
             return 0
 
         db = self.db.connect()
@@ -334,155 +336,148 @@ class Table(object):
         db.close()
         return result
 
+
     def size(self):
         """Returns the total number of rows in the table."""
-        if not self.columns:  # handle a non-existant table
+        if not self.columns: # handle a non-existent table
             return 0
+        
         db = self.db.connect()
         cur = db.cursor()
-        cur.execute("SELECT COUNT(*) FROM " + self.name + ";")
+        
+        cur.execute('SELECT COUNT(*) FROM {0};'.format(self.name))
         result = int(cur.fetchone()[0])
         db.close()
         return result
+    
+    
+    def _make_where_statement(self, cols):
+        return ' AND '.join('{0} = {1}'.format(c, self.db.sub) for c in cols)
+    
+    
+    def _select(self, cur, columns=[], where={}):
+        """Select one or more rows from the table.
+        'columns' must be a list and 'where' must be a dict."""
+        if where:
+            curkeys, curvalues = zip(*where.items())
+            where_sql = ' WHERE ' + self._make_where_statement(curkeys)
+        else:
+            where_sql = ''
+            
+        command = 'SELECT {0} FROM {1}{2};'.format(
+            ', '.join(columns) if columns else '*',
+            self.name,
+            where_sql)
+        cur.execute(command, curvalues)
+        return cur.fetchall()
+        
+        
+    def _insert(self, cur, values):
+        """Insert a row into the table.
+        'values' can be either a list or a dict."""
+        try:
+            columns, values = zip(*values.items())
+            columns_sql = ' ({1})'.format(', '.join(columns))
+        except AttributeError:
+            columns_sql = ''
+            
+        command = 'INSERT INTO {0}{1} VALUES ({2});'.format(
+            self.name,
+            columns_sql,
+            ', '.join((self.db.sub,) * len(values)))
+        cur.execute(command, values)
+        
+        
+    def _update(self, cur, values, where):
+        """Update a row in the table.
+        'values' and 'where' must be dicts."""
+        newcolumns, newvalues = zip(*values.items())
+        curcolumns, curvalues = zip(*where.items())
+        
+        command = 'UPDATE {0} SET {1} WHERE {2};'.format(
+            self.name,
+            ', '.join('{0} = {1}'.format(c, self.db.sub) for c in newcolumns),
+            self._make_where_statement(curcolumns))
+        cur.execute(command, newvalues + curvalues)
+        
+        
+    def _delete(self, cur, where):
+        """Delete a row from the table.
+        'where' must be a dict."""
+        columns, values = zip(*where.items())
+        
+        command = 'DELETE FROM {0} WHERE {1};'.format(
+            self.name,
+            self._make_where_statement(columns))
+        cur.execute(command, values)      
+        
 
-    def _make_where_statement(self, key, row):
-        if isinstance(key, basestring):
-            key = [key]
-        where = []
-        for k in key:
-            where.append(k + ' = %s' % self.db.substitution)
-        return ' AND '.join(where) + ';'
-
-    def _get_one(self, row, value, key):
-        """Implements get() for where values is a single string"""
-        if isinstance(row, basestring):
-            row = [row]
-        db = self.db.connect()
-        cur = db.cursor()
-        where = self._make_where_statement(key, row)
-        cur.execute(
-            'SELECT ' + value + ' FROM ' + self.name + ' WHERE ' + where, row)
-        result = cur.fetchone()
-        if result is None:
-            db.close()
-            raise KeyError(row + ' not in database')
-        db.close()
-
-        return result[0]
-
-    def _get_many(self, row, values, key):
-        """Implements get() for where values is iterable"""
-        if isinstance(row, basestring):
-            row = [row]
-        db = self.db.connect()
-        cur = db.cursor()
-        values = ', '.join(values)
-        where = self._make_where_statement(key, row)
-        cur.execute(
-            'SELECT ' + values + ' FROM ' + self.name + ' WHERE ' + where, row)
-        row = cur.fetchone()
-
-        if row is None:
-            db.close()
-            raise KeyError(row + ' not in database')
-        db.close()
-
-        return row
-
-    def get(self, row, columns, key=None):
+    def get(self, columns, where={}):
         """
-        Retrieve the value(s) in one or more ``columns`` in the row where the
-        ``key`` column(s) match the value(s) given in ``row``. This is basically
-        equivalent to executing ``SELECT <columns> FROM <self> WHERE <key> =
-        <row>``.
-
-        The ``key`` can be either the name of one column as a string, or a tuple
-        of the names of multiple columns. ``row`` is the value or values of this
-        column or columns for which data will be retrieved. If multiple columns
-        are being used, the order in which the columns are presented should match
-        between ``row`` and ``key``. A ``KeyError`` will be raised if no have
-        values matching ``row`` in ``key``. If ``key`` is not passed, it will
-        default to the table's primary key.
-
-        ``columns`` can either be a single column name, or a tuple of column
-        names. If one name is passed, a single string will be returned. If a
-        tuple of names is passed, the return value will be a tuple in the same
-        order.
-        """  # TODO this documentation could be better.
-        if not self.columns:  # handle a non-existant table
-            return None
-
-        if not key:
-            key = self.key
-        if not (isinstance(row, basestring) and isinstance(key, basestring)):
-            if not len(row) == len(key):
-                raise ValueError('Unequal number of key and row columns.')
-
-        if isinstance(columns, basestring):
-            return self._get_one(row, columns, key)
-        elif isinstance(columns, Iterable):
-            return self._get_many(row, columns, key)
-
-    def update(self, row, values, key=None):
+        Retrieve the value(s) in one or more 'columns' in the row matching the
+        columns and values in the 'where' dict.
+        
+        'columns' can be either a single column name, or a list of column names.
+        If one name is passed, a single string will be returned; otherwise a
+        list of values will be returned in the same order.
         """
-        Update the row where the values in ``row`` match the ``key`` columns.
-        If the row does not exist, it will be created. The same rules regarding
-        the type and length of ``key`` and ``row`` apply for ``update`` as for
-        ``get``.
-
-        The given ``values`` must be a dict of column name to new value.
-        """
-        if not self.columns:  # handle a non-existant table
+        if not self.columns: # handle a non-existent table
             raise ValueError('Table is empty.')
-
-        if isinstance(row, basestring):
-            rowl = [row]
+        
+        db = self.db.connect()
+        
+        if isinstance(columns, basestring):
+            result = [row[0] for row in
+                      self._select(db.cursor(), [columns], where)]
         else:
-            rowl = row
-        if not key:
-            key = self.key
+            result = self._select(db.cursor(), columns, where)
+        
+        db.close()
+        if not result:
+            raise KeyError('Row does not exist in table.')
+
+        return result
+        
+        
+    def update(self, values, where={}):
+        """
+        Update the row matching the columns and values in the 'where' dict,
+        with the columns and new values in the 'values' dict.
+        If the row does not exist, it will be created.
+        """
+        if not self.columns: # handle a non-existent table
+            raise ValueError('Table is empty.')
+        
         db = self.db.connect()
         cur = db.cursor()
-        where = self._make_where_statement(key, row)
-        cur.execute('SELECT * FROM ' + self.name + ' WHERE ' + where, rowl)
-        if not cur.fetchone():
-            vals = '"' + row + '"'
-            for k in values:
-                key = key + ', ' + k
-                vals = vals + ', "' + values[k] + '"'
-            command = ('INSERT INTO ' + self.name + ' (' + key + ') VALUES (' +
-                      vals + ');')
+
+        if not self._select(cur, where):
+            self._insert(cur, values)
         else:
-            command = 'UPDATE ' + self.name + ' SET '
-            for k in values:
-                command = command + k + '="' + values[k] + '", '
-            command = command[:-2] + ' WHERE ' + key + ' = "' + row + '";'
-        cur.execute(command)
+            self._update(cur, values, where)
+            
         db.commit()
         db.close()
 
-    def delete(self, row, key=None):
+
+    def delete(self, where={}):
         """Deletes the row for ``row`` in the database, removing its values in
         all columns."""
-        if not self.columns:  # handle a non-existant table
-            raise KeyError('Table is empty.')
+        if not self.columns: # handle a non-existent table
+            raise ValueError('Table is empty.')
 
-        if isinstance(row, basestring):
-            row = [row]
-        if not key:
-            key = self.key
         db = self.db.connect()
         cur = db.cursor()
-
-        where = self._make_where_statement(key, row)
-        cur.execute('SELECT * FROM ' + self.name + ' WHERE ' + where, row)
-        if not cur.fetchone():
+        
+        if not self._select(cur, where=where):
             db.close()
-            raise KeyError(key + ' not in database')
+            raise KeyError('Row does not exist in table.')
 
-        cur.execute('DELETE FROM ' + self.name + ' WHERE ' + where, row)
+        self._delete(cur, where)
+        
         db.commit()
         db.close()
+        
 
     def keys(self, key=None):
         """
@@ -492,19 +487,19 @@ class Table(object):
         the value of the ``key`` column(s), which defaults to the primary key,
         and table is the Table. This may be deprecated in future versions.
         """
-        if not self.columns:  # handle a non-existant table
-            raise KeyError('Table is empty.')
+        if not self.columns: # handle a non-existent table
+            raise ValueError('Table is empty.')
 
         if not key:
             key = self.key
 
         db = self.db.connect()
-        cur = db.cursor()
 
-        cur.execute('SELECT ' + key + ' FROM ' + self.name + '')
-        result = cur.fetchall()
+        result = self._select(db.cursor(), key)
+        
         db.close()
         return result
+    
 
     def __iter__(self):
         return self.keys()
