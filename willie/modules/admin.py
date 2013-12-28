@@ -136,10 +136,10 @@ def invite_join(bot, trigger):
 @willie.module.priority('low')
 def hold_ground(bot, trigger):
     """
-    This function monitors all kicks across all channels willie is in. If it
+    This function monitors all kicks across all channels Willie is in. If it
     detects that it is the one kicked it'll automatically join that channel.
 
-    WARNING: This may not be needed and could cause problems if willie becomes
+    WARNING: This may not be needed and could cause problems if Willie becomes
     annoying. Please use this with caution.
     """
     if bot.config.has_section('admin') and bot.config.admin.hold_ground:
@@ -163,7 +163,7 @@ def mode(bot, trigger):
 @willie.module.commands('set')
 @willie.module.example('.set core.owner Me')
 def set_config(bot, trigger):
-    """See and modify values of willies config object.
+    """See and modify values of Willie's config object.
 
     Trigger args:
         arg1 - section and option, in the form "section.option"
@@ -176,7 +176,7 @@ def set_config(bot, trigger):
         bot.reply("This command only works as a private message.")
         return
     if not trigger.admin:
-        bot.reply("This command requires admin priviledges.")
+        bot.reply("This command requires admin privileges.")
         return
 
     # Get section and option from first argument.
@@ -204,14 +204,17 @@ def set_config(bot, trigger):
         bot.reply("%s.%s = %s" % (section, option, value))
         return
 
-    # Otherwise, set the value to one given as argument 2.
+    # Otherwise, set the value to the string following the first argument.
+    if not bot.config.has_section(section):
+        bot.config.add_section(section)
+    value = trigger.group(2).split(None, 1)[1].strip()
     setattr(getattr(bot.config, section), option, value)
 
 
 @willie.module.commands('save')
 @willie.module.example('.save')
 def save_config(bot, trigger):
-    """Save state of willies config object to the configuration file."""
+    """Save state of Willie's config object to the configuration file."""
     if trigger.sender.startswith('#'):
         return
     if not trigger.admin:
