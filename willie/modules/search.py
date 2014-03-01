@@ -7,11 +7,14 @@ Licensed under the Eiffel Forum License 2.
 http://willie.dftba.net
 """
 
+from __future__ import unicode_literals
+
 import re
-from willie import web
-from willie.module import commands, example
 import json
 import time
+
+from willie import web
+from willie.module import commands, example
 
 
 def google_ajax(query):
