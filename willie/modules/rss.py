@@ -17,6 +17,7 @@ import feedparser
 
 from willie.module import commands, interval
 from willie.config import ConfigurationError
+from willie import formatting
 
 
 socket.setdefaulttimeout(10)
@@ -115,15 +116,6 @@ def migrate_from_old_tables(bot, c):
                 '''.format(sub), (channel, site_name, site_url, fg, bg))
 
 
-def colour_text(text, fg, bg=''):
-    """Given some text and fore/back colours, return a coloured text string."""
-    if fg == '':
-        return text
-    else:
-        colour = '{0},{1}'.format(fg, bg) if bg != '' else fg
-        return "\x03{0}{1}\x03".format(colour, text)
-
-
 @commands('rss')
 def manage_rss(bot, trigger):
     """Manage RSS feeds. For a list of commands, type: .rss help"""
@@ -187,8 +179,8 @@ class RSSManager:
             \s+([~&#+!][^\s,]+)   # channel
             \s+("[^"]+"|[\w-]+)  # name, which can contain anything but quotes if quoted
             \s+(\S+)             # url
-            (?:\s+(\d+))?        # foreground colour (optional)
-            (?:\s+(\d+))?        # background colour (optional)
+            (?:\s+(\w+))?        # foreground colour (optional)
+            (?:\s+(\w+))?        # background colour (optional)
             '''
         match = re.match(pattern, trigger.group(), re.IGNORECASE | re.VERBOSE)
         if match is None:
@@ -198,8 +190,14 @@ class RSSManager:
         channel = match.group(1)
         feed_name = match.group(2).strip('"')
         feed_url = match.group(3)
-        fg = int(match.group(4)) % 16 if match.group(4) else ''
-        bg = int(match.group(5)) % 16 if match.group(5) else ''
+        try:
+            fg = formatting._get_color(match.group(4))
+        except (ValueError, TypeError):
+            fg = ''
+        try:
+            bg = formatting._get_color(match.group(5))
+        except (ValueError, TypeError):
+            bg = ''
 
         c.execute('''
             SELECT * FROM rss_feeds WHERE channel = {0} AND feed_name = {0}
@@ -328,7 +326,7 @@ class RSSManager:
         for feed in filtered:
             bot.say("  {0} {1} {2}{3} {4} {5}".format(
                     feed.channel,
-                    colour_text(feed.name, feed.fg, feed.bg),
+                    formatting.color(feed.name, feed.fg, feed.bg),
                     feed.url,
                     " (disabled)" if not feed.enabled else '',
                     feed.fg, feed.bg))
@@ -465,8 +463,8 @@ def read_feeds(bot, force=False):
                 continue
 
         # create message for new entry
-        message = u"[\x02{0}\x02] \x02{1}\x02 {2}".format(
-            colour_text(feed.name, feed.fg, feed.bg), entry.title, entry.link)
+        message = u"[{0}] {1} | {2}".format(
+            formatting.color(feed.name, feed.fg, feed.bg), entry.title, entry.link)
 
         # append update time if it exists, or published time if it doesn't
         timestamp = entry_update_dt or entry_dt
@@ -478,7 +476,7 @@ def read_feeds(bot, force=False):
             if not tformat and bot.config.has_option('clock', 'time_format'):
                 tformat = bot.config.clock.time_format
 
-            message += " - {0}".format(timestamp.strftime(tformat or '%F - %T%Z'))
+            message += " | {0}".format(timestamp.strftime(tformat or '%F - %T%Z'))
 
         # print message
         bot.msg(feed.channel, message)
